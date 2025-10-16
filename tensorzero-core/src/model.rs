@@ -629,6 +629,7 @@ async fn wrap_provider_stream(
         .map(std::borrow::Cow::into_owned);
     let otlp_config = clients.otlp_config.clone();
     let postgres_connection_info = clients.postgres_connection_info.clone();
+    let deferred_tasks = clients.deferred_tasks.clone();
     let base_stream = async_stream::stream! {
         let mut buffer = vec![];
         let mut errored = false;
@@ -657,7 +658,8 @@ async fn wrap_provider_stream(
             yield chunk;
         }
         otlp_config.apply_usage_to_model_provider_span(&span, &total_usage);
-        tokio::spawn(async move {
+        // Make sure that we finish updating rate-limiting tickets if the gateway shuts down
+        deferred_tasks.spawn(async move {
             if let Err(e) = ticket_borrow
                 .return_tickets(&postgres_connection_info, RateLimitResourceUsage {
                     model_inferences: 1,
@@ -1017,6 +1019,8 @@ pub enum UninitializedProviderConfig {
         #[serde(default)]
         api_type: OpenAIAPIType,
         #[serde(default)]
+        include_encrypted_reasoning: bool,
+        #[serde(default)]
         provider_tools: Vec<Value>,
     },
     OpenRouter {
@@ -1123,6 +1127,7 @@ impl UninitializedProviderConfig {
                                 .await?,
                             // TODO - decide how to expose the responses api for wrapped providers
                             OpenAIAPIType::ChatCompletions,
+                            false,
                             Vec::new(),
                             )?),
                         HostedProviderKind::TGI => Box::new(TGIProvider::new(
@@ -1256,6 +1261,7 @@ impl UninitializedProviderConfig {
                 api_base,
                 api_key_location,
                 api_type,
+                include_encrypted_reasoning,
                 provider_tools,
             } => ProviderConfig::OpenAI(OpenAIProvider::new(
                 model_name,
@@ -1267,6 +1273,7 @@ impl UninitializedProviderConfig {
                     )
                     .await?,
                 api_type,
+                include_encrypted_reasoning,
                 provider_tools,
             )?),
             UninitializedProviderConfig::OpenRouter {
@@ -1582,7 +1589,8 @@ impl ModelProvider {
         let provider_inference_response = res?;
         if let Ok(actual_resource_usage) = provider_inference_response.resource_usage() {
             let postgres_connection_info = clients.postgres_connection_info.clone();
-            tokio::spawn(async move {
+            // Make sure that we finish updating rate-limiting tickets if the gateway shuts down
+            clients.deferred_tasks.spawn(async move {
                 if let Err(e) = ticket_borrow
                     .return_tickets(&postgres_connection_info, actual_resource_usage)
                     .await
@@ -2252,6 +2260,7 @@ impl ShorthandModelConfig for ModelConfig {
                     .get_defaulted_credential(None, default_credentials)
                     .await?,
                 OpenAIAPIType::ChatCompletions,
+                false,
                 Vec::new(),
             )?),
             "openrouter" => ProviderConfig::OpenRouter(OpenRouterProvider::new(
@@ -2422,6 +2431,7 @@ mod tests {
             tags: Arc::new(Default::default()),
             rate_limiting_config: Arc::new(Default::default()),
             otlp_config: Default::default(),
+            deferred_tasks: tokio_util::task::TaskTracker::new(),
         };
 
         // Try inferring the good model only
@@ -2549,6 +2559,7 @@ mod tests {
             tags: Arc::new(tags.clone()),
             rate_limiting_config: Arc::new(rate_limit_config.clone()),
             otlp_config: Default::default(),
+            deferred_tasks: tokio_util::task::TaskTracker::new(),
         };
 
         let request_no_max_tokens = ModelInferenceRequest {
@@ -2632,6 +2643,7 @@ mod tests {
             tags: Arc::new(Default::default()),
             rate_limiting_config: Arc::new(Default::default()),
             otlp_config: Default::default(),
+            deferred_tasks: tokio_util::task::TaskTracker::new(),
         };
         // Try inferring the good model only
         let request = ModelInferenceRequest {
@@ -2782,6 +2794,7 @@ mod tests {
                     tags: Arc::new(Default::default()),
                     rate_limiting_config: Arc::new(Default::default()),
                     otlp_config: Default::default(),
+                    deferred_tasks: tokio_util::task::TaskTracker::new(),
                 },
                 "my_model",
             )
@@ -2850,6 +2863,7 @@ mod tests {
                     tags: Arc::new(Default::default()),
                     rate_limiting_config: Arc::new(Default::default()),
                     otlp_config: Default::default(),
+                    deferred_tasks: tokio_util::task::TaskTracker::new(),
                 },
                 "my_model",
             )
@@ -2965,6 +2979,7 @@ mod tests {
                     tags: Arc::new(Default::default()),
                     rate_limiting_config: Arc::new(Default::default()),
                     otlp_config: Default::default(),
+                    deferred_tasks: tokio_util::task::TaskTracker::new(),
                 },
                 "my_model",
             )
@@ -3046,6 +3061,7 @@ mod tests {
             tags: Arc::new(Default::default()),
             rate_limiting_config: Arc::new(Default::default()),
             otlp_config: Default::default(),
+            deferred_tasks: tokio_util::task::TaskTracker::new(),
         };
 
         let request = ModelInferenceRequest {
@@ -3102,6 +3118,7 @@ mod tests {
             tags: Arc::new(Default::default()),
             rate_limiting_config: Arc::new(Default::default()),
             otlp_config: Default::default(),
+            deferred_tasks: tokio_util::task::TaskTracker::new(),
         };
         let response = model_config
             .infer(&request, &clients, model_name)
@@ -3164,6 +3181,7 @@ mod tests {
             tags: Arc::new(Default::default()),
             rate_limiting_config: Arc::new(Default::default()),
             otlp_config: Default::default(),
+            deferred_tasks: tokio_util::task::TaskTracker::new(),
         };
 
         let request = ModelInferenceRequest {
@@ -3219,6 +3237,7 @@ mod tests {
             tags: Arc::new(Default::default()),
             rate_limiting_config: Arc::new(Default::default()),
             otlp_config: Default::default(),
+            deferred_tasks: tokio_util::task::TaskTracker::new(),
         };
         let response = model_config
             .infer(&request, &clients, model_name)

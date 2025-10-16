@@ -1233,6 +1233,7 @@ async fn test_embedding_request() {
                 tags: Arc::new(Default::default()),
                 rate_limiting_config: Arc::new(Default::default()),
                 otlp_config: Default::default(),
+                deferred_tasks: tokio_util::task::TaskTracker::new(),
             },
         )
         .await
@@ -1317,6 +1318,7 @@ async fn test_embedding_request() {
                 tags: Arc::new(Default::default()),
                 rate_limiting_config: Arc::new(Default::default()),
                 otlp_config: Default::default(),
+                deferred_tasks: tokio_util::task::TaskTracker::new(),
             },
         )
         .await
@@ -1386,6 +1388,7 @@ async fn test_embedding_sanity_check() {
         tags: Arc::new(Default::default()),
         rate_limiting_config: Arc::new(Default::default()),
         otlp_config: Default::default(),
+        deferred_tasks: tokio_util::task::TaskTracker::new(),
     };
     let scope_info = ScopeInfo {
         tags: &HashMap::new(),
@@ -2190,7 +2193,7 @@ async fn test_responses_api_reasoning() {
                 "variant_name": "openai",
                 "pointer": "/reasoning",
                 "value": {
-                    "effort": "high",
+                    "effort": "low",
                     "summary": "auto"
                 }
             }
@@ -2214,6 +2217,15 @@ async fn test_responses_api_reasoning() {
     assert!(
         has_thought,
         "Missing thought block in output: {content_blocks:?}"
+    );
+
+    let has_encrypted_thought = content_blocks.iter().any(|block| {
+        block.get("type").unwrap().as_str().unwrap() == "thought"
+            && block.get("signature").unwrap().as_str().is_some()
+    });
+    assert!(
+        has_encrypted_thought,
+        "Missing encrypted thought block in output: {content_blocks:?}"
     );
 }
 

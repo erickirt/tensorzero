@@ -60,6 +60,7 @@ impl ShorthandModelConfig for EmbeddingModelConfig {
                     .await?,
                 // TODO: handle the fact that there are also embeddings
                 OpenAIAPIType::ChatCompletions,
+                false,
                 Vec::new(),
             )?),
             #[cfg(any(test, feature = "e2e_tests"))]
@@ -594,7 +595,8 @@ impl EmbeddingProviderInfo {
         };
         let postgres_connection_info = clients.postgres_connection_info.clone();
         let resource_usage = response.resource_usage();
-        tokio::spawn(
+        // Make sure that we finish updating rate-limiting tickets if the gateway shuts down
+        clients.deferred_tasks.spawn(
             async move {
                 if let Err(e) = ticket_borrow
                     .return_tickets(&postgres_connection_info, resource_usage)
@@ -822,6 +824,7 @@ mod tests {
                     tags: Arc::new(Default::default()),
                     rate_limiting_config: Arc::new(Default::default()),
                     otlp_config: Default::default(),
+                    deferred_tasks: tokio_util::task::TaskTracker::new(),
                 },
             )
             .await;
@@ -854,6 +857,7 @@ mod tests {
                     crate::model::CredentialLocation::None,
                 )),
                 api_type: Default::default(),
+                include_encrypted_reasoning: false,
                 provider_tools: Vec::new(),
             },
             timeout_ms: None,
